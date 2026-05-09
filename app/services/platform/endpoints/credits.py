@@ -142,8 +142,4 @@ def _authorize_internal_request(service_secret: str | None) -> None:
 
 
 def _is_self_topup_enabled() -> bool:
-    if not settings.enable_credit_self_topup:
-        return False
-
-    normalized_environment = settings.app_environment.strip().lower()
-    return normalized_environment in {"dev", "development", "local"}
+    return settings.enable_credit_self_topup
