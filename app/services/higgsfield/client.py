@@ -62,55 +62,97 @@ async def _run_higgsfield(
     return process.returncode or 0, stdout_str, stderr_str
 
 
+def _extract_url(job: dict[str, Any]) -> HiggsfieldGenerateResult | None:
+    job_id = job.get("id")
+
+    # Primary: result_url at top level (actual HF API shape)
+    url = job.get("result_url")
+    if url and isinstance(url, str):
+        return HiggsfieldGenerateResult(url=url, media_type="image", job_id=job_id)
+
+    # Fallback: result.media (array)
+    result = job.get("result")
+    if isinstance(result, dict):
+        media = result.get("media")
+        if isinstance(media, list) and media:
+            item = media[0]
+            url = item.get("url")
+            if url:
+                return HiggsfieldGenerateResult(
+                    url=url,
+                    media_type=item.get("type", "image"),
+                    job_id=job_id,
+                )
+        if isinstance(media, dict):
+            url = media.get("url")
+            if url:
+                return HiggsfieldGenerateResult(
+                    url=url,
+                    media_type=media.get("type", "image"),
+                    job_id=job_id,
+                )
+        url = result.get("url")
+        if url:
+            return HiggsfieldGenerateResult(url=url, media_type="image", job_id=job_id)
+
+    # Fallback: top-level media / medias
+    for key in ("media", "medias"):
+        val = job.get(key)
+        if isinstance(val, list) and val:
+            item = val[0]
+            if isinstance(item, dict):
+                url = item.get("url")
+                if url:
+                    return HiggsfieldGenerateResult(
+                        url=url,
+                        media_type=item.get("type", "image"),
+                        job_id=job_id,
+                    )
+        if isinstance(val, dict):
+            url = val.get("url")
+            if url:
+                return HiggsfieldGenerateResult(
+                    url=url,
+                    media_type=val.get("type", "image"),
+                    job_id=job_id,
+                )
+
+    return None
+
+
 def _parse_result(output: str) -> HiggsfieldGenerateResult:
     try:
-        data: list[dict[str, Any]] = json.loads(output)
+        data = json.loads(output)
     except json.JSONDecodeError:
         raise HiggsfieldError(f"Failed to parse Higgsfield JSON output: {output[:500]}")
 
-    if not data:
-        raise HiggsfieldError("Higgsfield returned empty result array")
-
-    job: dict[str, Any] = data[-1]
-    job_id = job.get("id")
-
-    result = job.get("result")
-    if not result:
+    # Handle single job object
+    if isinstance(data, dict):
+        result = _extract_url(data)
+        if result:
+            return result
         raise HiggsfieldError(
-            f"Higgsfield job has no result field | job_id={job_id} | status={job.get('status')}"
+            f"Could not extract media URL | keys={list(data.keys())} | status={data.get('status')}"
         )
 
-    media = result.get("media")
-    if isinstance(media, list) and media:
-        item = media[0]
-        url = item.get("url")
-        if url:
-            return HiggsfieldGenerateResult(
-                url=url,
-                media_type=item.get("type", "image"),
-                job_id=job_id,
-            )
+    # Handle array of job objects
+    if isinstance(data, list):
+        if not data:
+            raise HiggsfieldError("Higgsfield returned empty result array")
 
-    if isinstance(media, dict):
-        url = media.get("url")
-        if url:
-            return HiggsfieldGenerateResult(
-                url=url,
-                media_type=media.get("type", "image"),
-                job_id=job_id,
-            )
+        for job in reversed(data):
+            if not isinstance(job, dict):
+                continue
+            result = _extract_url(job)
+            if result:
+                return result
 
-    url = result.get("url")
-    if url:
-        return HiggsfieldGenerateResult(
-            url=url,
-            media_type="image",
-            job_id=job_id,
+        last = data[-1] if isinstance(data[-1], dict) else {}
+        raise HiggsfieldError(
+            f"Could not extract media URL from any job | last_keys={list(last.keys())} | status={last.get('status')}"
         )
 
-    raise HiggsfieldError(
-        f"Could not extract media URL from Higgsfield result | job_id={job_id}"
-    )
+    raise HiggsfieldError(f"Unexpected Higgsfield response type: {type(data).__name__}")
 
 
 async def generate_image(
@@ -118,6 +160,7 @@ async def generate_image(
     model: str,
     prompt: str,
     image_path: str,
+    quality: str = "high",
     aspect_ratio: str = "1:1",
     timeout: int = GENERATE_TIMEOUT,
 ) -> HiggsfieldGenerateResult:
@@ -127,6 +170,7 @@ async def generate_image(
         model,
         "--prompt", prompt,
         "--image", image_path,
+        "--quality", quality,
         "--aspect_ratio", aspect_ratio,
         "--wait",
         "--json",

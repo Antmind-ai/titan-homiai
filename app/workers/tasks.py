@@ -89,7 +89,8 @@ async def process_design_request_task(
             model=settings.higgsfield_design_model,
             prompt=prompt,
             image_path=str(image_path),
-            aspect_ratio="1:1",
+            quality=settings.higgsfield_design_quality,
+            aspect_ratio=settings.higgsfield_design_aspect_ratio,
         )
 
         logger.info(
