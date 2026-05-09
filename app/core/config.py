@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     app_name: str = "Titan"
     app_version: str = "1.0.0"
     secret_key: str = Field(..., min_length=32)
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = Field(default=60 * 24 * 30, ge=1)
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
