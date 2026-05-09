@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = Field(default=60 * 24 * 30, ge=1)
     design_upload_dir: str = "/tmp/titan/design-inputs"
     design_upload_max_mb: int = Field(default=15, ge=1, le=50)
+    app_environment: str = "development"
+    free_lifetime_credits: int = Field(default=3, ge=0, le=1000)
+    credits_internal_api_key: str | None = Field(default=None)
+    enable_credit_self_topup: bool = False
+    credit_self_topup_amount: int = Field(default=3, ge=1, le=1000)
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 

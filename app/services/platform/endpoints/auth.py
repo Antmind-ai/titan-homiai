@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import InvalidTokenError, create_access_token, decode_access_token
-from app.services.platform.models import DeviceUser
+from app.services.platform.models import CreditLedgerEvent, DeviceUser
 from app.services.platform.schemas.auth import AuthMeResponse, DeviceLoginRequest, DeviceLoginResponse
 
 router = APIRouter(prefix="/auth")
@@ -52,15 +52,32 @@ async def device_login(
     db: AsyncSession = Depends(get_db),
 ) -> DeviceLoginResponse:
     now = datetime.now(UTC)
+    initial_credits = settings.free_lifetime_credits
 
     result = await db.execute(select(DeviceUser).where(DeviceUser.device_id == payload.device_id))
     user = result.scalar_one_or_none()
 
     if user is None:
-        user = DeviceUser(device_id=payload.device_id, last_seen_at=now)
+        user = DeviceUser(
+            device_id=payload.device_id,
+            last_seen_at=now,
+            credit_balance=initial_credits,
+        )
         db.add(user)
         try:
             await db.flush()
+
+            if initial_credits > 0:
+                db.add(
+                    CreditLedgerEvent(
+                        user_id=user.id,
+                        delta=initial_credits,
+                        balance_after=initial_credits,
+                        source="signup_grant",
+                        reason="Initial free lifetime credits",
+                    )
+                )
+                await db.flush()
         except IntegrityError:
             # Handle race condition where another request created the same device user.
             await db.rollback()

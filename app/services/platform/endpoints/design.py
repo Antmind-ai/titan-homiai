@@ -3,8 +3,11 @@ from pathlib import Path
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.services.platform.credit_service import InsufficientCreditsError, consume_credit
 from app.services.platform.endpoints.auth import get_current_user_id
 from app.services.platform.schemas.design import (
     CreateDesignRequest,
@@ -107,6 +110,7 @@ async def upload_design_input_image(
 async def submit_design_request(
     payload: CreateDesignRequest,
     current_user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
 ) -> CreateDesignResponse:
     if payload.source == DesignSource.UPLOAD:
         if payload.input_upload_id is None:
@@ -121,6 +125,34 @@ async def submit_design_request(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Uploaded design input not found",
             )
+
+    try:
+        await consume_credit(
+            db,
+            user_id=current_user_id,
+            source="design_request",
+            reason="Design request submitted",
+        )
+    except InsufficientCreditsError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "insufficient_credits",
+                "message": "No credits remaining. Add credits to continue.",
+                "balance": exc.balance,
+                "required_credits": exc.required_credits,
+                "lifetime_free_credits": settings.free_lifetime_credits,
+            },
+        ) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        ) from exc
+
+    await db.commit()
 
     return CreateDesignResponse(
         design_request_id=uuid.uuid4(),
