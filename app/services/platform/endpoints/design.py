@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 import mimetypes
 from pathlib import Path
 import uuid
@@ -140,6 +141,7 @@ async def list_my_design_requests(
         .where(
             DesignRequest.user_id == current_user_id,
             DesignRequest.source == DesignSource.UPLOAD.value,
+            DesignRequest.deleted_at.is_(None),
         )
         .order_by(DesignRequest.submitted_at.desc())
         .limit(50)
@@ -170,6 +172,34 @@ async def list_my_design_requests(
     return DesignHistoryResponse(items=history_items)
 
 
+@router.delete(
+    "/{design_request_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Soft-delete a design request",
+)
+async def delete_design_request(
+    design_request_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await db.execute(
+        select(DesignRequest).where(
+            DesignRequest.id == design_request_id,
+            DesignRequest.user_id == current_user_id,
+            DesignRequest.deleted_at.is_(None),
+        )
+    )
+    design_request = result.scalar_one_or_none()
+    if design_request is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Design request not found",
+        )
+
+    design_request.deleted_at = datetime.now(UTC)
+    await db.commit()
+
+
 @router.get(
     "/{design_request_id}/preview",
     summary="Serve uploaded source image preview for a design request",
@@ -183,6 +213,7 @@ async def get_design_request_preview(
         select(DesignRequest).where(
             DesignRequest.id == design_request_id,
             DesignRequest.user_id == current_user_id,
+            DesignRequest.deleted_at.is_(None),
         )
     )
     design_request = result.scalar_one_or_none()
