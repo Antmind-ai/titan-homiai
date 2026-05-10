@@ -174,6 +174,50 @@ async def list_my_design_requests(
     return DesignHistoryResponse(items=history_items)
 
 
+@router.get(
+    "/{design_request_id}",
+    response_model=DesignHistoryItem,
+    summary="Get a single design request",
+)
+async def get_design_request(
+    design_request_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> DesignHistoryItem:
+    result = await db.execute(
+        select(DesignRequest).where(
+            DesignRequest.id == design_request_id,
+            DesignRequest.user_id == current_user_id,
+            DesignRequest.deleted_at.is_(None),
+        )
+    )
+    design_request = result.scalar_one_or_none()
+    if design_request is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Design request not found",
+        )
+
+    preview_file = _resolve_preview_file_for_request(current_user_id, design_request)
+    return DesignHistoryItem(
+        design_request_id=design_request.id,
+        user_id=design_request.user_id,
+        source=DesignSource(design_request.source),
+        status=design_request.status,
+        input_upload_id=design_request.input_upload_id,
+        building_type=design_request.building_type,
+        style_id=design_request.style_id,
+        palette_id=design_request.palette_id,
+        prompt=design_request.prompt,
+        submitted_at=design_request.submitted_at,
+        updated_at=design_request.updated_at,
+        preview_url=(
+            _build_preview_url(design_request.id) if preview_file is not None else None
+        ),
+        output_preview_url=design_request.output_preview_url,
+    )
+
+
 @router.delete(
     "/{design_request_id}",
     status_code=status.HTTP_204_NO_CONTENT,
