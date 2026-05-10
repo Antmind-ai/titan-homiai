@@ -20,7 +20,7 @@ class CreditMutationResult:
 
 
 class InsufficientCreditsError(Exception):
-    def __init__(self, balance: int, required_credits: int = 1):
+    def __init__(self, balance: int, required_credits: int = 25):
         super().__init__("Insufficient credits")
         self.balance = balance
         self.required_credits = required_credits
@@ -45,7 +45,7 @@ async def consume_credit(
     return await apply_credit_delta(
         db,
         user_id=user_id,
-        delta=-1,
+        delta=-25,
         source=source,
         reason=reason,
         reference_id=reference_id,

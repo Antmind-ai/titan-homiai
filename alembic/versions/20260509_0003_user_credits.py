@@ -17,7 +17,7 @@ down_revision: str | None = "0002"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-FREE_LIFETIME_CREDITS = 3
+FREE_LIFETIME_CREDITS = 75
 
 
 def upgrade() -> None:
