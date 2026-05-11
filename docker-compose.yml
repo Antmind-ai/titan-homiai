@@ -98,7 +98,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
       target: production
     image: titan-api:latest
     container_name: titan_app
