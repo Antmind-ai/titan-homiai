@@ -16,6 +16,7 @@ from app.services.platform.schemas.auth import (
     DeleteAccountResponse,
     DeviceLoginRequest,
     DeviceLoginResponse,
+    MarkOnboardingCompletedResponse,
 )
 
 router = APIRouter(prefix="/auth")
@@ -126,17 +127,47 @@ async def auth_me(
     db: AsyncSession = Depends(get_db),
 ) -> AuthMeResponse:
     result = await db.execute(
-        select(DeviceUser.id).where(
+        select(DeviceUser.id, DeviceUser.onboarding_completed).where(
             DeviceUser.id == current_user_id,
             DeviceUser.deleted_at.is_(None),
         )
     )
-    if result.scalar_one_or_none() is None:
+    row = result.one_or_none()
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    return AuthMeResponse(user_id=current_user_id)
+    return AuthMeResponse(user_id=row.id, onboarding_completed=row.onboarding_completed)
+
+
+@router.patch(
+    "/me/onboarding",
+    response_model=MarkOnboardingCompletedResponse,
+    summary="Mark onboarding as completed for the current user",
+)
+async def mark_onboarding_completed(
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> MarkOnboardingCompletedResponse:
+    result = await db.execute(
+        select(DeviceUser).where(
+            DeviceUser.id == current_user_id,
+            DeviceUser.deleted_at.is_(None),
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    user.onboarding_completed = True
+    await db.commit()
+
+    return MarkOnboardingCompletedResponse(user_id=current_user_id)
 
 
 @router.delete(

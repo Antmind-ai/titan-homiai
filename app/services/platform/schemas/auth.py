@@ -25,6 +25,16 @@ class DeviceLoginResponse(BaseModel):
 
 class AuthMeResponse(BaseModel):
     user_id: uuid.UUID
+    onboarding_completed: bool
+
+
+class MarkOnboardingCompletedRequest(BaseModel):
+    pass
+
+
+class MarkOnboardingCompletedResponse(BaseModel):
+    user_id: uuid.UUID
+    onboarding_completed: bool = True
 
 
 class DeleteAccountResponse(BaseModel):
