@@ -8,12 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv /venv
-ENV PATH=/venv/bin:$PATH
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+ENV UV_PROJECT_ENVIRONMENT=/venv PATH=/venv/bin:$PATH
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-editable
 
 
 # ── Production stage ──────────────────────────────────────────────────────────
