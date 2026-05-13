@@ -29,6 +29,5 @@ class WorkerSettings:
     max_jobs = settings.arq_max_jobs
     job_timeout = settings.arq_job_timeout_seconds
     keep_result = settings.arq_keep_result_seconds
-    max_tries = 4
     on_startup = startup
     on_shutdown = shutdown

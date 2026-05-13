@@ -23,22 +23,6 @@ class HiggsfieldGenerateResult:
         self.job_id = job_id
 
 
-def is_retryable_higgsfield_error(message: str) -> bool:
-    normalized = message.lower()
-    retryable_markers = (
-        "http 500",
-        "http 502",
-        "http 503",
-        "http 504",
-        "internal server error",
-        "timed out",
-        "timeout",
-        "temporarily unavailable",
-        "connection reset",
-    )
-    return any(marker in normalized for marker in retryable_markers)
-
-
 async def _run_higgsfield(
     *args: str,
     timeout: int = GENERATE_TIMEOUT,
@@ -191,39 +175,14 @@ async def generate_image(
         "--json",
     ]
 
-    max_attempts = 3
-    backoff_seconds = (1.5, 3.0)
-    last_error: HiggsfieldError | None = None
+    returncode, stdout, stderr = await _run_higgsfield(*args, timeout=timeout)
 
-    for attempt in range(1, max_attempts + 1):
-        try:
-            returncode, stdout, stderr = await _run_higgsfield(*args, timeout=timeout)
+    if returncode != 0:
+        raise HiggsfieldError(
+            f"Higgsfield CLI exited with code {returncode} | stderr={stderr[:500]}"
+        )
 
-            if returncode != 0:
-                raise HiggsfieldError(
-                    f"Higgsfield CLI exited with code {returncode} | stderr={stderr[:500]}"
-                )
+    if stderr and "error" in stderr.lower():
+        raise HiggsfieldError(f"Higgsfield CLI reported error: {stderr[:500]}")
 
-            if stderr and "error" in stderr.lower():
-                raise HiggsfieldError(f"Higgsfield CLI reported error: {stderr[:500]}")
-
-            return _parse_result(stdout)
-        except HiggsfieldError as exc:
-            last_error = exc
-            retryable = is_retryable_higgsfield_error(str(exc))
-            if attempt >= max_attempts or not retryable:
-                raise
-
-            delay = backoff_seconds[min(attempt - 1, len(backoff_seconds) - 1)]
-            logger.warning(
-                "Higgsfield call failed (retrying) | attempt={}/{} | delay={}s | error={}",
-                attempt,
-                max_attempts,
-                delay,
-                str(exc)[:300],
-            )
-            await asyncio.sleep(delay)
-
-    if last_error is not None:
-        raise last_error
-    raise HiggsfieldError("Higgsfield generation failed with unknown error")
+    return _parse_result(stdout)

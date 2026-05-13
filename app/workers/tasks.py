@@ -3,17 +3,12 @@ from pathlib import Path
 from typing import Any
 import uuid
 
-from arq import Retry
 from loguru import logger
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import get_db_context
-from app.services.higgsfield.client import (
-    HiggsfieldError,
-    generate_image,
-    is_retryable_higgsfield_error,
-)
+from app.services.higgsfield.client import HiggsfieldError, generate_image
 from app.services.platform.models import DesignRequest, DeviceUser
 from app.services.r2 import (
     delete_object_async,
@@ -154,18 +149,6 @@ async def process_design_request_task(
 
     except HiggsfieldError as exc:
         error_msg = str(exc)[:500]
-        job_try = int(ctx.get("job_try", 1))
-        if is_retryable_higgsfield_error(error_msg) and job_try < 4:
-            retry_delay_seconds = 30 * job_try
-            logger.warning(
-                "Retryable Higgsfield failure | request_id={} | job_try={} | retry_in={}s | error={}",
-                request_id,
-                job_try,
-                retry_delay_seconds,
-                error_msg,
-            )
-            raise Retry(defer=retry_delay_seconds)
-
         logger.error("Higgsfield generation failed | request_id={} | error={}", request_id, error_msg)
 
         async with get_db_context() as db:
