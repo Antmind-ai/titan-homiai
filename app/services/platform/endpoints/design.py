@@ -103,7 +103,9 @@ async def upload_design_input_image(
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail=(
-                        f"Image exceeds max size of {settings.design_upload_max_mb}MB"
+                        "Image exceeds max size of "
+                        f"{settings.design_upload_max_mb}MB "
+                        f"(received {(size_bytes / (1024 * 1024)):.2f}MB)"
                     ),
                 )
 
