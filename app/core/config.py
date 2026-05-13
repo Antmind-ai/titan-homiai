@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic import Field, computed_field
@@ -23,6 +24,14 @@ class Settings(BaseSettings):
     design_upload_dir: str = "/tmp/titan/design-inputs"
     design_upload_max_mb: int = Field(default=15, ge=1, le=50)
     design_output_dir: str = "/tmp/titan/design-outputs"
+    design_generation_provider: Literal["fal", "higgsfield"] = "fal"
+    enable_higgsfield_backend: bool = False
+    fal_key: str | None = Field(default=None)
+    fal_timeout_minutes: int = Field(default=20, ge=1, le=120)
+    fal_design_model: str = "fal-ai/nano-banana-pro/edit"
+    fal_design_aspect_ratio: str = "1:1"
+    fal_design_resolution: Literal["1K", "2K", "4K"] = "1K"
+    fal_design_output_format: Literal["jpeg", "png", "webp"] = "png"
     higgsfield_timeout_minutes: int = Field(default=20, ge=1, le=120)
     higgsfield_bin: str = "higgsfield"
     higgsfield_design_model: str = "seedream_v4_5"

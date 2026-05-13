@@ -25,6 +25,7 @@ dependencies = [
     "psutil==7.0.0",
     "python-multipart==0.0.20",
     "httpx==0.28.1",
+    "fal-client==1.0.0",
 ]
 
 [build-system]

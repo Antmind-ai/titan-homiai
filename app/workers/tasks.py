@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import get_db_context
-from app.services.higgsfield.client import HiggsfieldError, generate_image
+from app.services.design_generation import DesignGenerationError, generate_image
 from app.services.platform.models import DesignRequest, DeviceUser
 from app.services.r2 import (
     delete_object_async,
@@ -62,11 +62,11 @@ async def _resolve_input_image_path(design_request: DesignRequest) -> tuple[Path
         )
 
         if not image_path.exists():
-            raise HiggsfieldError(f"Input image not found on disk: {image_path}")
+            raise DesignGenerationError(f"Input image not found on disk: {image_path}")
 
         return image_path, is_temp
 
-    raise HiggsfieldError("No input image filename or R2 key on design request")
+    raise DesignGenerationError("No input image filename or R2 key on design request")
 
 
 def _cleanup_temp_file(file_path: Path) -> None:
@@ -114,22 +114,21 @@ async def process_design_request_task(
         prompt = _build_design_prompt(design_request)
 
         logger.info(
-            "Calling Higgsfield | request_id={} | prompt={} | image={}",
+            "Calling design generation provider | request_id={} | provider={} | "
+            "prompt={} | image={}",
             request_id,
+            settings.design_generation_provider,
             prompt[:200],
             image_path,
         )
 
         result_obj = await generate_image(
-            model=settings.higgsfield_design_model,
             prompt=prompt,
             image_path=str(image_path),
-            quality=settings.higgsfield_design_quality,
-            aspect_ratio=settings.higgsfield_design_aspect_ratio,
         )
 
         logger.info(
-            "Higgsfield result | request_id={} | url={}",
+            "Design generation result | request_id={} | url={}",
             request_id,
             result_obj.url,
         )
@@ -147,9 +146,9 @@ async def process_design_request_task(
             design_request.output_preview_url = result_obj.url
             await db.commit()
 
-    except HiggsfieldError as exc:
+    except DesignGenerationError as exc:
         error_msg = str(exc)[:500]
-        logger.error("Higgsfield generation failed | request_id={} | error={}", request_id, error_msg)
+        logger.error("Design generation failed | request_id={} | error={}", request_id, error_msg)
 
         async with get_db_context() as db:
             result = await db.execute(select(DesignRequest).where(DesignRequest.id == request_id))
