@@ -121,6 +121,26 @@ Current migration baseline enables PostgreSQL extensions:
 - `pg_trgm`
 - `btree_gin`
 
+## Discover Catalog Seeding
+
+Run this after migrations (or whenever discover seed data changes).
+
+Local (from `backend/`):
+
+```bash
+alembic upgrade head
+python3 seed.py
+```
+
+Docker Compose:
+
+```bash
+docker compose exec app alembic upgrade head
+docker compose exec app python seed.py
+```
+
+`seed.py` fully reseeds discover catalog tables: it removes existing discover rows and inserts the latest seed data.
+
 ## API Endpoints
 
 - `GET /` service metadata
