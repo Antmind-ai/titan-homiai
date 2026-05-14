@@ -20,7 +20,7 @@ class FalGenerationError(DesignGenerationError):
     """Raised when the fal.ai provider cannot complete generation."""
 
 
-def _parse_result(output: dict[str, Any]) -> DesignGenerationResult:
+def _parse_result(output: dict[str, Any], *, model: str) -> DesignGenerationResult:
     images = output.get("images")
     if not isinstance(images, list) or not images:
         keys = list(output.keys())
@@ -44,7 +44,7 @@ def _parse_result(output: dict[str, Any]) -> DesignGenerationResult:
     request_id = output.get("request_id")
     job_id = request_id if isinstance(request_id, str) else None
 
-    return DesignGenerationResult(url=url, media_type=media_type, job_id=job_id)
+    return DesignGenerationResult(url=url, media_type=media_type, job_id=job_id, model=model)
 
 
 async def _upload_input_image(image_path: str) -> str:
@@ -102,4 +102,4 @@ async def generate_image(
             f"Invalid fal.ai response type: expected object, got {type(output).__name__}"
         )
 
-    return _parse_result(output)
+    return _parse_result(output, model=model)

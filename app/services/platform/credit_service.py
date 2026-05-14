@@ -46,11 +46,14 @@ async def consume_credit(
     source: str,
     reason: str | None = None,
     reference_id: str | None = None,
+    credits: int = 25,
 ) -> CreditMutationResult:
+    if credits < 25:
+        raise ValueError("credits must be at least 25")
     return await apply_credit_delta(
         db,
         user_id=user_id,
-        delta=-25,
+        delta=-credits,
         source=source,
         reason=reason,
         reference_id=reference_id,

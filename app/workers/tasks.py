@@ -9,6 +9,8 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import get_db_context
 from app.services.design_generation import DesignGenerationError, generate_image
+from app.services.design_generation.service import get_model_credit_cost
+from app.services.platform.credit_service import consume_credit
 from app.services.platform.models import DesignRequest, DeviceUser
 from app.services.r2 import (
     delete_object_async,
@@ -140,6 +142,33 @@ async def process_design_request_task(
             if design_request is None:
                 logger.error("Design request missing during completion | request_id={}", request_id)
                 return {"status": "missing", "design_request_id": design_request_id}
+
+            model_cost = get_model_credit_cost(result_obj.model) if result_obj.model else 25
+            if model_cost > 25:
+                try:
+                    await consume_credit(
+                        db,
+                        user_id=design_request.user_id,
+                        source="design_request_fallback",
+                        reason=f"Fallback model used: {result_obj.model}",
+                        reference_id=design_request_id,
+                        credits=model_cost - 25,
+                    )
+                    logger.info(
+                        "Additional credits charged for fallback model | request_id={} | model={} | "
+                        "extra_credits={}",
+                        request_id,
+                        result_obj.model,
+                        model_cost - 25,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to charge additional credits for fallback model | request_id={} | "
+                        "model={} | error={}",
+                        request_id,
+                        result_obj.model,
+                        exc,
+                    )
 
             design_request.status = "completed"
             design_request.completed_at = datetime.now(UTC)

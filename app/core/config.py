@@ -28,10 +28,7 @@ class Settings(BaseSettings):
     enable_higgsfield_backend: bool = False
     fal_key: str | None = Field(default=None)
     fal_timeout_minutes: int = Field(default=20, ge=1, le=120)
-    fal_design_model: str = (
-        "fal-ai/bytedance/seedream/v4.5/edit,"
-        "fal-ai/nano-banana-pro/edit"
-    )
+    fal_design_model: str = "fal-ai/bytedance/seedream/v4.5/edit"
     fal_design_aspect_ratio: str = "1:1"
     fal_design_resolution: Literal["1K", "2K", "4K"] = "1K"
     fal_design_output_format: Literal["jpeg", "png", "webp"] = "png"

@@ -12,3 +12,4 @@ class DesignGenerationResult:
     url: str
     media_type: str = "image"
     job_id: str | None = None
+    model: str = ""

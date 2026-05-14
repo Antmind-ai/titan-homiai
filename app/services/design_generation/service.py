@@ -10,6 +10,31 @@ from app.services.design_generation.models import (
 )
 from app.services.higgsfield import client as higgsfield_provider
 
+# Model ID → credits consumed per image
+MODEL_CREDIT_COST: dict[str, int] = {
+    "fal-ai/bytedance/seedream/v4.5/edit": 25,
+    "fal-ai/nano-banana-pro/edit": 75,
+    # Higgsfield model IDs
+    "seedream_v4_5": 25,
+}
+
+# Model ID → USD cost per image (fal.ai pricing)
+MODEL_API_COST: dict[str, float] = {
+    "fal-ai/bytedance/seedream/v4.5/edit": 0.04,
+    "fal-ai/nano-banana-pro/edit": 0.15,
+    # Nano Banana Pro 4K outputs cost $0.30
+    # Higgsfield model IDs
+    "seedream_v4_5": 0.04,
+}
+
+
+def get_model_credit_cost(model: str) -> int:
+    return MODEL_CREDIT_COST.get(model, 25)
+
+
+def get_model_api_cost(model: str) -> float:
+    return MODEL_API_COST.get(model, 0.04)
+
 
 def _higgsfield_enabled() -> bool:
     return settings.enable_higgsfield_backend
@@ -43,6 +68,7 @@ async def _generate_higgsfield(
         url=result.url,
         media_type=result.media_type,
         job_id=result.job_id,
+        model=settings.higgsfield_design_model,
     )
 
 
@@ -59,7 +85,7 @@ async def _generate_fal(
             if len(candidates) > 1:
                 logger.info("fal.ai model attempt | model={}", model)
 
-            return await fal_provider.generate_image(
+            result = await fal_provider.generate_image(
                 model=model,
                 prompt=prompt,
                 image_path=image_path,
@@ -68,6 +94,7 @@ async def _generate_fal(
                 output_format=settings.fal_design_output_format,
                 timeout=settings.fal_timeout_minutes * 60,
             )
+            return result
         except Exception as exc:
             error_msg = str(exc)[:500]
             errors.append(f"{model}: {error_msg}")
