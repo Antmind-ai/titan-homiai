@@ -162,6 +162,8 @@ services:
       - ${DESIGN_UPLOAD_DIR:-/tmp/titan/design-inputs}:${DESIGN_UPLOAD_DIR:-/tmp/titan/design-inputs}
       - ${DESIGN_OUTPUT_DIR:-/tmp/titan/design-outputs}:${DESIGN_OUTPUT_DIR:-/tmp/titan/design-outputs}
       - higgsfield_config:/app/.config
+    ports:
+      - "${APP_HOST_BIND:-0.0.0.0}:${APP_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
