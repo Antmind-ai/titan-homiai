@@ -107,7 +107,7 @@ def test_object_replace_key_generation_sanitizes_filename() -> None:
     )
 
 
-def test_create_presigned_upload_includes_metadata_headers(
+def test_create_presigned_upload_uses_minimal_required_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, dict]] = []
@@ -131,19 +131,11 @@ def test_create_presigned_upload_includes_metadata_headers(
         image_height=900,
     )
 
-    assert upload.headers["Content-Type"] == "image/jpeg"
-    assert upload.headers["x-amz-meta-feature"] == "object-replace"
-    assert upload.headers["x-amz-meta-size-bytes"] == "12345"
-    assert upload.headers["x-amz-meta-image-width"] == "1200"
-    assert upload.headers["x-amz-meta-image-height"] == "900"
-    assert calls[0][1]["Metadata"] == {
-        "upload-id": str(upload.upload_id),
-        "user-id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "file-name": "Living-Room-.jpg",
-        "feature": "object-replace",
-        "size-bytes": "12345",
-        "image-width": "1200",
-        "image-height": "900",
+    assert upload.headers == {"Content-Type": "image/jpeg"}
+    assert calls[0][0] == "put_object"
+    assert calls[0][1] == {
+        "Bucket": "test-bucket",
+        "Key": upload.object_key,
     }
 
 

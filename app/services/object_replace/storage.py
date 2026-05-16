@@ -115,22 +115,11 @@ def create_presigned_upload(
         file_name=file_name,
         content_type=content_type,
     )
-    metadata = {
-        "upload-id": str(upload_id),
-        "user-id": sanitize_path_part(str(user_id), fallback="user"),
-        "file-name": sanitize_path_part(file_name, fallback="image"),
-        "feature": "object-replace",
-    }
-    if size_bytes is not None:
-        metadata["size-bytes"] = str(size_bytes)
-    if image_width is not None:
-        metadata["image-width"] = str(image_width)
-    if image_height is not None:
-        metadata["image-height"] = str(image_height)
-
+    # Keep required request headers minimal for mobile clients. React Native/iOS may
+    # normalize or omit custom x-amz-meta headers, which can invalidate a strict
+    # signature and cause 401/403 Unauthorized responses from object storage.
     headers = {
         "Content-Type": content_type,
-        **{f"x-amz-meta-{key}": value for key, value in metadata.items()},
     }
 
     try:
@@ -140,8 +129,6 @@ def create_presigned_upload(
             Params={
                 "Bucket": settings.r2_bucket_name,
                 "Key": object_key,
-                "ContentType": content_type,
-                "Metadata": metadata,
             },
             ExpiresIn=settings.r2_presigned_url_expiry,
         )
