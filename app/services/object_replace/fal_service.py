@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 import os
+import struct
 from typing import Any
+import zlib
 
 import fal_client
 from loguru import logger
@@ -19,6 +22,68 @@ def _require_fal_key() -> None:
     if not settings.fal_key:
         raise ObjectReplaceFalError("FAL_KEY is required for Object Replace")
     os.environ["FAL_KEY"] = settings.fal_key
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(chunk_type + data) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", crc)
+
+
+def build_circular_mask_png(
+    *,
+    width: int,
+    height: int,
+    point: ObjectReplacePoint,
+    radius: int | None = None,
+) -> bytes:
+    if width < 1 or height < 1:
+        raise ValueError("Mask dimensions must be positive")
+
+    radius_px = radius if radius is not None else max(28, int(min(width, height) * 0.08))
+    radius_px = max(8, min(radius_px, max(width, height)))
+    radius_sq = radius_px * radius_px
+
+    image_rows = bytearray()
+    for y in range(height):
+        image_rows.append(0)  # PNG row filter: None
+        dy = y - point.y
+        for x in range(width):
+            dx = x - point.x
+            image_rows.append(255 if (dx * dx + dy * dy) <= radius_sq else 0)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    idat = zlib.compress(bytes(image_rows), level=9)
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", idat)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+async def upload_binary_blob(
+    *,
+    data: bytes,
+    content_type: str,
+    file_name: str,
+) -> str:
+    _require_fal_key()
+
+    try:
+        return await fal_client.upload_async(
+            data=data,
+            content_type=content_type,
+            file_name=file_name,
+        )
+    except Exception as exc:
+        logger.exception(
+            "fal.ai upload failed | file_name={} | content_type={} | size_bytes={}",
+            file_name,
+            content_type,
+            len(data),
+        )
+        raise ObjectReplaceFalError("fal.ai upload failed") from exc
 
 
 def _extract_request_id(output: dict[str, Any], enqueued_request_id: str | None) -> str | None:
@@ -193,6 +258,51 @@ async def replace_object(
         "mask_url": mask_url,
         "request_id": fill_request_id,
         "mask_request_id": mask_request_id,
+        "fill_request_id": fill_request_id,
+        "prompt": final_prompt,
+    }
+
+
+async def replace_object_from_uploaded_image(
+    *,
+    image_bytes: bytes,
+    image_content_type: str,
+    file_name: str,
+    point: ObjectReplacePoint,
+    prompt: str,
+    image_width: int,
+    image_height: int,
+) -> dict[str, str | None]:
+    safe_stem = Path(file_name).stem or "object-replace"
+
+    original_image_url = await upload_binary_blob(
+        data=image_bytes,
+        content_type=image_content_type,
+        file_name=file_name,
+    )
+    mask_png = build_circular_mask_png(
+        width=image_width,
+        height=image_height,
+        point=point,
+    )
+    mask_url = await upload_binary_blob(
+        data=mask_png,
+        content_type="image/png",
+        file_name=f"{safe_stem}-mask.png",
+    )
+
+    image_url_out, fill_request_id, final_prompt = await inpaint_object(
+        image_url=original_image_url,
+        mask_url=mask_url,
+        prompt=prompt,
+    )
+
+    return {
+        "image_url": image_url_out,
+        "mask_url": mask_url,
+        "original_image_url": original_image_url,
+        "request_id": fill_request_id,
+        "mask_request_id": None,
         "fill_request_id": fill_request_id,
         "prompt": final_prompt,
     }
