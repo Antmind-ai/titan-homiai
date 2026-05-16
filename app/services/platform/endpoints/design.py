@@ -236,7 +236,7 @@ async def upload_design_input_image(
 @router.get(
     "/me",
     response_model=DesignHistoryResponse,
-    summary="List current user's uploaded design requests",
+    summary="List current user's design requests",
 )
 async def list_my_design_requests(
     current_user_id: uuid.UUID = Depends(get_current_user_id),
@@ -246,7 +246,6 @@ async def list_my_design_requests(
         select(DesignRequest)
         .where(
             DesignRequest.user_id == current_user_id,
-            DesignRequest.source == DesignSource.UPLOAD.value,
             DesignRequest.deleted_at.is_(None),
         )
         .order_by(DesignRequest.submitted_at.desc())
@@ -367,7 +366,7 @@ async def delete_design_request(
 @router.get(
     "/{design_request_id}/preview",
     response_model=None,
-    summary="Serve uploaded source image preview for a design request",
+    summary="Serve source image preview for a design request",
 )
 async def get_design_request_preview(
     design_request_id: uuid.UUID,
@@ -382,7 +381,7 @@ async def get_design_request_preview(
         )
     )
     design_request = result.scalar_one_or_none()
-    if design_request is None or design_request.source != DesignSource.UPLOAD.value:
+    if design_request is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Design request not found",
