@@ -145,22 +145,6 @@ async def replace_object_from_upload(
     resolved_height = image_height or max(point_y + 1, 1024)
     point = ObjectReplacePoint(x=point_x, y=point_y, label=1)
 
-    try:
-        result = await fal_service.replace_object_from_uploaded_image(
-            image_bytes=image_bytes,
-            image_content_type=content_type,
-            file_name=file.filename or "object-replace-upload",
-            point=point,
-            prompt=normalized_prompt,
-            image_width=resolved_width,
-            image_height=resolved_height,
-        )
-    except fal_service.ObjectReplaceFalError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-
     normalized_building_type = (building_type or "other").strip()[:80] or "other"
     normalized_style_id = (style_id or "modern").strip()[:80] or "modern"
     normalized_palette_id = (palette_id or "surprise-me").strip()[:80] or "surprise-me"
@@ -172,14 +156,49 @@ async def replace_object_from_upload(
         style_id=normalized_style_id,
         palette_id=normalized_palette_id,
         prompt=normalized_prompt,
-        status="completed",
-        queue_job_id=result["request_id"],
-        output_preview_url=str(result["image_url"]),
+        status="processing",
         processing_started_at=datetime.now(UTC),
-        completed_at=datetime.now(UTC),
     )
 
     db.add(design_request)
+    try:
+        await db.commit()
+        await db.refresh(design_request)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not create My Library entry for object replacement.",
+        )
+
+    try:
+        result = await fal_service.replace_object_from_uploaded_image(
+            image_bytes=image_bytes,
+            image_content_type=content_type,
+            file_name=file.filename or "object-replace-upload",
+            point=point,
+            prompt=normalized_prompt,
+            image_width=resolved_width,
+            image_height=resolved_height,
+        )
+    except fal_service.ObjectReplaceFalError as exc:
+        design_request.status = "failed"
+        design_request.error_message = str(exc)[:500]
+        design_request.failed_at = datetime.now(UTC)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    design_request.status = "completed"
+    design_request.queue_job_id = result["request_id"]
+    design_request.output_preview_url = str(result["image_url"])
+    design_request.completed_at = datetime.now(UTC)
+    design_request.error_message = None
     try:
         await db.commit()
     except Exception:
