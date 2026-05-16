@@ -33,6 +33,14 @@ make setup
 
 This builds images, starts Postgres/Redis, runs migrations, and starts all services.
 
+For local development without Nginx and SSL, use:
+
+```bash
+make setup-dev
+```
+
+This starts only the dev profile services: `postgres`, `redis`, `app`, and `arq-worker`.
+
 ### 3) Verify
 
 ```bash
@@ -103,6 +111,33 @@ make logs
 make logs-app
 make logs-worker
 make logs-nginx
+```
+
+`make up` starts the production profile by default.
+
+## Profiles (Dev vs Prod)
+
+Use profiles when you want to run only a subset of services.
+
+- Dev profile services: `postgres`, `redis`, `app`, `arq-worker`
+- Prod profile services: all dev services plus `nginx` and `certbot`
+
+Run only dev profile services:
+
+```bash
+docker compose --profile dev up -d
+```
+
+Stop only dev profile services:
+
+```bash
+docker compose --profile dev down
+```
+
+If you want the one-command bootstrap for dev (build + migrate + start), use:
+
+```bash
+make setup-dev
 ```
 
 ## Migrations

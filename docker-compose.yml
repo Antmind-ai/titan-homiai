@@ -1,17 +1,17 @@
 name: titan
 
 services:
-
   # ── PostgreSQL 16 + pgvector ───────────────────────────────────────────────
   postgres:
     image: pgvector/pgvector:pg16
     container_name: titan_postgres
+    profiles: ["dev", "prod"]
     restart: unless-stopped
     environment:
-      POSTGRES_USER:        ${DB_USER:-titan}
-      POSTGRES_PASSWORD:    ${DB_PASSWORD:?DB_PASSWORD is required}
-      POSTGRES_DB:          ${DB_NAME:-titan}
-      PGDATA:               /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: ${DB_USER:-titan}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-titan}
+      PGDATA: /var/lib/postgresql/data/pgdata
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
     # Tuned for 4 CPU / 16 GB RAM (KVM4 on Hostinger)
     command: >
@@ -42,7 +42,8 @@ services:
     networks:
       - titan_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-titan} -d ${DB_NAME:-titan}"]
+      test:
+        ["CMD-SHELL", "pg_isready -U ${DB_USER:-titan} -d ${DB_NAME:-titan}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -57,6 +58,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: titan_redis
+    profiles: ["dev", "prod"]
     restart: unless-stopped
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -102,29 +104,30 @@ services:
       target: production
     image: titan-api:latest
     container_name: titan_app
+    profiles: ["dev", "prod"]
     restart: unless-stopped
     environment:
-      SECRET_KEY:      ${SECRET_KEY:?SECRET_KEY is required}
-      DB_HOST:         postgres
-      DB_PORT:         5432
-      DB_USER:         ${DB_USER:-titan}
-      DB_PASSWORD:     ${DB_PASSWORD:?DB_PASSWORD is required}
-      DB_NAME:         ${DB_NAME:-titan}
-      DB_POOL_SIZE:    ${DB_POOL_SIZE:-20}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-titan}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: ${DB_NAME:-titan}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-40}
-      REDIS_HOST:      redis
-      REDIS_PORT:      6379
-      REDIS_PASSWORD:  ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      REDIS_DB:        ${REDIS_DB:-0}
-      ARQ_QUEUE_NAME:  ${ARQ_QUEUE_NAME:-titan:queue}
-      ARQ_MAX_JOBS:    ${ARQ_MAX_JOBS:-100}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_DB: ${REDIS_DB:-0}
+      ARQ_QUEUE_NAME: ${ARQ_QUEUE_NAME:-titan:queue}
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-100}
       ARQ_JOB_TIMEOUT_SECONDS: ${ARQ_JOB_TIMEOUT_SECONDS:-1800}
       ARQ_KEEP_RESULT_SECONDS: ${ARQ_KEEP_RESULT_SECONDS:-3600}
-      WORKERS_COUNT:   ${WORKERS_COUNT:-0}
-      RUN_MIGRATIONS:  ${RUN_MIGRATIONS:-false}
+      WORKERS_COUNT: ${WORKERS_COUNT:-0}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
       ENABLE_CREDIT_SELF_TOPUP: ${ENABLE_CREDIT_SELF_TOPUP:-false}
       CREDIT_SELF_TOPUP_AMOUNT: ${CREDIT_SELF_TOPUP_AMOUNT:-3}
-      APP_ENVIRONMENT:  ${APP_ENVIRONMENT:-production}
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
       FREE_LIFETIME_CREDITS: ${FREE_LIFETIME_CREDITS:-3}
       CREDITS_INTERNAL_API_KEY: ${CREDITS_INTERNAL_API_KEY:-}
       DESIGN_UPLOAD_DIR: ${DESIGN_UPLOAD_DIR:-/tmp/titan/design-inputs}
@@ -170,25 +173,26 @@ services:
   arq-worker:
     image: titan-api:latest
     container_name: titan_arq_worker
+    profiles: ["dev", "prod"]
     restart: unless-stopped
     command: ["arq", "app.workers.worker.WorkerSettings"]
     healthcheck:
       disable: true
     environment:
-      SECRET_KEY:      ${SECRET_KEY:?SECRET_KEY is required}
-      DB_HOST:         postgres
-      DB_PORT:         5432
-      DB_USER:         ${DB_USER:-titan}
-      DB_PASSWORD:     ${DB_PASSWORD:?DB_PASSWORD is required}
-      DB_NAME:         ${DB_NAME:-titan}
-      DB_POOL_SIZE:    ${DB_POOL_SIZE:-20}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-titan}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: ${DB_NAME:-titan}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-40}
-      REDIS_HOST:      redis
-      REDIS_PORT:      6379
-      REDIS_PASSWORD:  ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      REDIS_DB:        ${REDIS_DB:-0}
-      ARQ_QUEUE_NAME:  ${ARQ_QUEUE_NAME:-titan:queue}
-      ARQ_MAX_JOBS:    ${ARQ_MAX_JOBS:-100}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_DB: ${REDIS_DB:-0}
+      ARQ_QUEUE_NAME: ${ARQ_QUEUE_NAME:-titan:queue}
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-100}
       ARQ_JOB_TIMEOUT_SECONDS: ${ARQ_JOB_TIMEOUT_SECONDS:-1800}
       ARQ_KEEP_RESULT_SECONDS: ${ARQ_KEEP_RESULT_SECONDS:-3600}
       DESIGN_UPLOAD_DIR: ${DESIGN_UPLOAD_DIR:-/tmp/titan/design-inputs}
@@ -236,6 +240,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: titan_nginx
+    profiles: ["prod"]
     restart: unless-stopped
     ports:
       - "80:80"
@@ -251,7 +256,11 @@ services:
     networks:
       - titan_net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/nginx-health >/dev/null || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost/nginx-health >/dev/null || exit 1",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -266,6 +275,7 @@ services:
   certbot:
     image: certbot/certbot:latest
     container_name: titan_certbot
+    profiles: ["prod"]
     restart: unless-stopped
     volumes:
       - certbot_certs:/etc/letsencrypt

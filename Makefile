@@ -4,7 +4,10 @@
 #  Production server: titan.antmind.ai  (72.61.177.156 · Ubuntu 24.04)
 # ─────────────────────────────────────────────────────────────────────────────
 
-COMPOSE  := docker compose
+COMPOSE       := docker compose
+COMPOSE_DEV   := $(COMPOSE) --profile dev
+COMPOSE_PROD  := $(COMPOSE) --profile prod
+COMPOSE_ALL   := $(COMPOSE) --profile dev --profile prod
 DOMAIN   := titan.antmind.ai
 EMAIL    := admin@antmind.ai
 
@@ -23,15 +26,20 @@ help:
 	@echo "  Antmind Ventures Private Limited"
 	@echo ""
 	@echo "  ── First time ─────────────────────────────────────────────────────"
-	@echo "  make setup           Build, run migrations, start everything"
+	@echo "  make setup           Build, run migrations, start prod profile"
+	@echo "  make setup-dev       Build, run migrations, start dev profile (no nginx/ssl)"
 	@echo "  make ssl             Obtain SSL certificate from Let's Encrypt"
 	@echo ""
 	@echo "  ── Daily operations ───────────────────────────────────────────────"
-	@echo "  make up              Start all services"
+	@echo "  make up              Start prod profile services"
+	@echo "  make up-dev          Start dev profile services"
 	@echo "  make down            Stop all services"
+	@echo "  make down-dev        Stop dev profile services"
 	@echo "  make restart         Restart all services"
+	@echo "  make restart-dev     Restart dev profile services"
 	@echo "  make deploy          Pull, rebuild, migrate, restart (zero-downtime)"
 	@echo "  make status          Show container status"
+	@echo "  make status-dev      Show dev profile container status"
 	@echo ""
 	@echo "  ── Database / Migrations ───────────────────────────────────────────"
 	@echo "  make migrate                Apply pending migrations"
@@ -41,6 +49,7 @@ help:
 	@echo ""
 	@echo "  ── Logs ───────────────────────────────────────────────────────────"
 	@echo "  make logs            All services"
+	@echo "  make logs-dev        Dev profile services"
 	@echo "  make logs-app        App only"
 	@echo "  make logs-worker     ARQ worker only"
 	@echo "  make logs-nginx      Nginx only"
@@ -67,99 +76,131 @@ help:
 setup:
 	@echo "==> Titan first-time setup..."
 	@[ -f .env ] || (echo "ERROR: .env not found — copy .env.example and fill values" && exit 1)
-	@$(COMPOSE) build
-	@$(COMPOSE) up -d postgres redis
+	@$(COMPOSE_PROD) build
+	@$(COMPOSE_PROD) up -d postgres redis
 	@echo "    Waiting for Postgres to be healthy..."
-	@$(COMPOSE) run --rm -e RUN_MIGRATIONS=true app alembic upgrade head
-	@$(COMPOSE) up -d
+	@$(COMPOSE_PROD) run --rm -e RUN_MIGRATIONS=true app alembic upgrade head
+	@$(COMPOSE_PROD) up -d
 	@echo ""
 	@echo "  ✓  Titan is live!  Run 'make ssl' next to enable HTTPS."
 	@echo "     Swagger: http://$(DOMAIN)/docs"
 	@echo "     Health:  http://$(DOMAIN)/api/v1/health"
 	@echo ""
 
+.PHONY: setup-dev
+setup-dev:
+	@echo "==> Titan dev setup (no nginx/ssl)..."
+	@[ -f .env ] || (echo "ERROR: .env not found — copy .env.example and fill values" && exit 1)
+	@$(COMPOSE_DEV) build
+	@$(COMPOSE_DEV) up -d postgres redis
+	@echo "    Waiting for Postgres to be healthy..."
+	@$(COMPOSE_DEV) run --rm -e RUN_MIGRATIONS=true app alembic upgrade head
+	@$(COMPOSE_DEV) up -d
+	@echo ""
+	@echo "  ✓  Titan dev profile is live (nginx/certbot not started)."
+	@echo ""
+
 # ── Start / Stop / Deploy ────────────────────────────────────────────────────
 .PHONY: up
 up:
-	@$(COMPOSE) up -d
+	@$(COMPOSE_PROD) up -d
+
+.PHONY: up-dev
+up-dev:
+	@$(COMPOSE_DEV) up -d
 
 .PHONY: down
 down:
-	@$(COMPOSE) down
+	@$(COMPOSE_ALL) down
+
+.PHONY: down-dev
+down-dev:
+	@$(COMPOSE_DEV) down
 
 .PHONY: restart
 restart:
-	@$(COMPOSE) restart
+	@$(COMPOSE_PROD) restart
+
+.PHONY: restart-dev
+restart-dev:
+	@$(COMPOSE_DEV) restart
 
 .PHONY: build
 build:
-	@$(COMPOSE) build
+	@$(COMPOSE_PROD) build
 
 .PHONY: build-no-cache
 build-no-cache:
-	@$(COMPOSE) build --no-cache
+	@$(COMPOSE_PROD) build --no-cache
 
 .PHONY: deploy
 deploy:
 	@echo "==> Deploying Titan..."
 	@git pull --ff-only
-	@$(COMPOSE) build
-	@$(COMPOSE) run --rm -e RUN_MIGRATIONS=true app alembic upgrade head
-	@$(COMPOSE) up -d --remove-orphans
+	@$(COMPOSE_PROD) build
+	@$(COMPOSE_PROD) run --rm -e RUN_MIGRATIONS=true app alembic upgrade head
+	@$(COMPOSE_PROD) up -d --remove-orphans
 	@echo "==> Deploy complete — $(DOMAIN)"
 
 # ── Migrations ────────────────────────────────────────────────────────────────
 .PHONY: migrate
 migrate:
 	@echo "==> Applying migrations..."
-	@$(COMPOSE) exec app alembic upgrade head
+	@$(COMPOSE_PROD) exec app alembic upgrade head
 	@echo "==> Done"
 
 .PHONY: migration
 migration:
 	@[ -n "$(name)" ] || (echo "Usage: make migration name=<description>" && exit 1)
-	@$(COMPOSE) exec app alembic revision --autogenerate -m "$(name)"
+	@$(COMPOSE_PROD) exec app alembic revision --autogenerate -m "$(name)"
 
 .PHONY: downgrade
 downgrade:
-	@$(COMPOSE) exec app alembic downgrade -1
+	@$(COMPOSE_PROD) exec app alembic downgrade -1
 
 .PHONY: migration-history
 migration-history:
-	@$(COMPOSE) exec app alembic history --verbose
+	@$(COMPOSE_PROD) exec app alembic history --verbose
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
-.PHONY: logs logs-app logs-worker logs-nginx
+.PHONY: logs logs-dev logs-app logs-worker logs-nginx
 logs:
-	@$(COMPOSE) logs -f
+	@$(COMPOSE_PROD) logs -f
+
+logs-dev:
+	@$(COMPOSE_DEV) logs -f
 
 logs-app:
-	@$(COMPOSE) logs -f app
+	@$(COMPOSE_PROD) logs -f app
 
 logs-worker:
-	@$(COMPOSE) logs -f arq-worker
+	@$(COMPOSE_PROD) logs -f arq-worker
 
 logs-nginx:
-	@$(COMPOSE) logs -f nginx
+	@$(COMPOSE_PROD) logs -f nginx
 
 # ── Status ────────────────────────────────────────────────────────────────────
 .PHONY: status ps
 status ps:
-	@$(COMPOSE) ps
+	@$(COMPOSE_ALL) ps
+
+.PHONY: status-dev
+status-dev:
+	@$(COMPOSE_DEV) ps
 
 # ── Shells ────────────────────────────────────────────────────────────────────
 .PHONY: shell shell-worker shell-db shell-redis
 shell:
-	@$(COMPOSE) exec app bash
+	@$(COMPOSE_PROD) exec app bash
 
 shell-worker:
-	@$(COMPOSE) exec arq-worker bash
+	@$(COMPOSE_PROD) exec arq-worker bash
 
 shell-db:
-	@$(COMPOSE) exec postgres psql -U $${DB_USER:-titan} -d $${DB_NAME:-titan}
+	@$(COMPOSE_PROD) exec postgres psql -U $${DB_USER:-titan} -d $${DB_NAME:-titan}
 
 shell-redis:
-	@$(COMPOSE) exec redis redis-cli
+	@$(COMPOSE_PROD) exec redis redis-cli
 
 # ── SSL (Let's Encrypt) ───────────────────────────────────────────────────────
 .PHONY: ssl
@@ -171,9 +212,9 @@ ssl:
 		echo 'NGINX_CONF=titan.conf' >> .env; \
 	fi
 	@rm -f .env.bak
-	@$(COMPOSE) up -d nginx
+	@$(COMPOSE_PROD) up -d nginx
 	@echo "==> Obtaining SSL certificate for $(DOMAIN)..."
-	@$(COMPOSE) run --rm --entrypoint certbot certbot certonly \
+	@$(COMPOSE_PROD) run --rm --entrypoint certbot certbot certonly \
 		--webroot \
 		--webroot-path=/var/www/certbot \
 		--email $(EMAIL) \
@@ -188,8 +229,8 @@ ssl:
 		echo 'NGINX_CONF=titan-prod.conf' >> .env; \
 	fi
 	@rm -f .env.bak
-	@$(COMPOSE) up -d nginx
-	@$(COMPOSE) exec -T nginx nginx -t
+	@$(COMPOSE_PROD) up -d nginx
+	@$(COMPOSE_PROD) exec -T nginx nginx -t
 	@echo "==> HTTPS enabled — $(DOMAIN)"
 
 # ── Linting ───────────────────────────────────────────────────────────────────
@@ -216,5 +257,5 @@ lint-fix:
 clean:
 	@echo "WARNING: removes ALL containers and volumes — all data will be lost."
 	@read -p "Type 'yes' to confirm: " c && [ "$$c" = "yes" ] || (echo "Aborted." && exit 1)
-	@$(COMPOSE) down -v --remove-orphans
+	@$(COMPOSE_ALL) down -v --remove-orphans
 	@echo "==> Cleaned."
