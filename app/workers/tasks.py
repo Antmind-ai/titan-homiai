@@ -5,13 +5,18 @@ import uuid
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db_context
 from app.services.design_generation import DesignGenerationError, generate_image
 from app.services.design_generation.service import get_model_credit_cost
-from app.services.platform.credit_service import InsufficientCreditsError, consume_credit
-from app.services.platform.models import DesignRequest, DeviceUser
+from app.services.platform.credit_service import (
+    InsufficientCreditsError,
+    add_credits,
+    consume_credit,
+)
+from app.services.platform.models import CreditLedgerEvent, DesignRequest, DeviceUser
 from app.services.r2 import (
     delete_object_async,
     download_to_path_async,
@@ -82,6 +87,66 @@ def _cleanup_temp_file(file_path: Path) -> None:
             logger.debug("Cleaned up temp design input | path={}", file_path)
     except OSError as exc:
         logger.warning("Failed to cleanup temp design input | path={} | error={}", file_path, exc)
+
+
+def _build_credit_refund_idempotency_key(design_request_id: uuid.UUID) -> str:
+    return f"design-request-refund:{design_request_id}"
+
+
+async def _refund_design_request_credit(
+    db: AsyncSession,
+    *,
+    design_request: DesignRequest,
+    failure_reason: str,
+) -> bool:
+    request_id = str(design_request.id)
+
+    result = await db.execute(
+        select(CreditLedgerEvent)
+        .where(CreditLedgerEvent.user_id == design_request.user_id)
+        .where(CreditLedgerEvent.source == "design_request")
+        .where(CreditLedgerEvent.reference_id == request_id)
+        .order_by(CreditLedgerEvent.created_at.desc())
+        .limit(1)
+    )
+    original_charge_event = result.scalar_one_or_none()
+
+    if original_charge_event is None:
+        logger.warning(
+            "Skipping credit restore: original charge event not found | request_id={}",
+            request_id,
+        )
+        return False
+
+    credits_to_restore = abs(int(original_charge_event.delta))
+    if credits_to_restore <= 0:
+        logger.warning(
+            "Skipping credit restore: original charge delta is invalid | "
+            "request_id={} | delta={}",
+            request_id,
+            original_charge_event.delta,
+        )
+        return False
+
+    refund_reason = f"Design generation failed: {failure_reason}"[:255]
+    mutation = await add_credits(
+        db,
+        user_id=design_request.user_id,
+        credits=credits_to_restore,
+        source="design_request_refund",
+        reason=refund_reason,
+        reference_id=request_id,
+        idempotency_key=_build_credit_refund_idempotency_key(design_request.id),
+    )
+    logger.info(
+        "Restored design request credits | request_id={} | credits={} | "
+        "idempotent={} | balance={}",
+        request_id,
+        credits_to_restore,
+        mutation.idempotent,
+        mutation.balance,
+    )
+    return True
 
 
 async def process_design_request_task(
@@ -190,6 +255,19 @@ async def process_design_request_task(
             design_request = result.scalar_one_or_none()
 
             if design_request is not None:
+                try:
+                    await _refund_design_request_credit(
+                        db,
+                        design_request=design_request,
+                        failure_reason=error_msg,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to restore design request credits after generation failure | "
+                        "request_id={}",
+                        request_id,
+                    )
+
                 design_request.status = "failed"
                 design_request.failed_at = datetime.now(UTC)
                 design_request.error_message = error_msg
@@ -210,6 +288,19 @@ async def process_design_request_task(
             design_request = result.scalar_one_or_none()
 
             if design_request is not None:
+                try:
+                    await _refund_design_request_credit(
+                        db,
+                        design_request=design_request,
+                        failure_reason=error_msg,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to restore design request credits after unexpected worker failure | "
+                        "request_id={}",
+                        request_id,
+                    )
+
                 design_request.status = "failed"
                 design_request.failed_at = datetime.now(UTC)
                 design_request.error_message = error_msg
