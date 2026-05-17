@@ -44,20 +44,25 @@ async def _load_user_by_device_id(
     return result.scalar_one_or_none()
 
 
-async def _touch_or_reactivate_user(
+async def _touch_active_user(
     db: AsyncSession,
     *,
     user: DeviceUser,
     now: datetime,
 ) -> DeviceUser:
-    if user.deleted_at is not None:
-        user.deleted_at = None
-        user.onboarding_completed = False
-
     user.last_seen_at = now
     db.add(user)
     await db.flush()
     return user
+
+
+async def _purge_deleted_user_with_device_id(
+    db: AsyncSession,
+    *,
+    user: DeviceUser,
+) -> None:
+    await db.delete(user)
+    await db.flush()
 
 
 async def _claim_device_credit_grant(
@@ -151,6 +156,10 @@ async def device_login(
 
     user = await _load_user_by_device_id(db, device_id=payload.device_id)
 
+    if user is not None and user.deleted_at is not None:
+        await _purge_deleted_user_with_device_id(db, user=user)
+        user = None
+
     if user is None:
         try:
             user = await _create_user_with_device_lifetime_grant(
@@ -165,9 +174,17 @@ async def device_login(
             user = await _load_user_by_device_id(db, device_id=payload.device_id)
             if user is None:
                 raise
-            user = await _touch_or_reactivate_user(db, user=user, now=now)
+            if user.deleted_at is not None:
+                await _purge_deleted_user_with_device_id(db, user=user)
+                user = await _create_user_with_device_lifetime_grant(
+                    db,
+                    device_id=payload.device_id,
+                    now=now,
+                )
+            else:
+                user = await _touch_active_user(db, user=user, now=now)
     else:
-        user = await _touch_or_reactivate_user(db, user=user, now=now)
+        user = await _touch_active_user(db, user=user, now=now)
 
     await db.commit()
     await db.refresh(user)
@@ -293,7 +310,7 @@ async def delete_account(
         )
         user.credit_balance = 0
 
-    user.deleted_at = now
+    await db.delete(user)
     await db.commit()
 
     from app.workers.client import enqueue_job

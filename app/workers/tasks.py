@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
+import shutil
 from typing import Any
 import uuid
 
@@ -16,10 +17,11 @@ from app.services.platform.credit_service import (
     add_credits,
     consume_credit,
 )
-from app.services.platform.models import CreditLedgerEvent, DesignRequest, DeviceUser
+from app.services.platform.models import CreditLedgerEvent, DesignRequest
 from app.services.r2 import (
     delete_object_async,
     download_to_path_async,
+    list_objects_with_prefix_async,
 )
 
 
@@ -335,68 +337,50 @@ async def cleanup_user_data_task(
     deleted_keys: list[str] = []
     deleted_files: list[str] = []
 
-    async with get_db_context() as db:
-        result = await db.execute(
-            select(DeviceUser).where(DeviceUser.id == uid)
-        )
-        user = result.scalar_one_or_none()
+    # Cleanup only user-owned prefixes to avoid deleting shared discover assets.
+    user_prefixes = [
+        f"{uid}/",
+        f"object-replace/{uid}/",
+    ]
+    seen_keys: set[str] = set()
 
-        if user is None:
-            logger.warning("User not found for cleanup | user_id={}", uid)
-            return {"status": "missing", "user_id": user_id}
-
-        result = await db.execute(
-            select(DesignRequest.input_r2_key).where(
-                DesignRequest.user_id == uid,
-                DesignRequest.input_r2_key.isnot(None),
-            )
-        )
-        r2_keys = [row[0] for row in result.all() if row[0]]
-
-        result = await db.execute(
-            select(DesignRequest.input_filename).where(
-                DesignRequest.user_id == uid,
-                DesignRequest.input_filename.isnot(None),
-            )
-        )
-        filenames = [row[0] for row in result.all() if row[0]]
-
-    for key in r2_keys:
+    for prefix in user_prefixes:
         try:
-            deleted = await delete_object_async(key)
-            if deleted:
-                deleted_keys.append(key)
+            keys = await list_objects_with_prefix_async(prefix)
         except Exception as exc:
             logger.error(
-                "Failed to delete R2 object | user_id={} | key={} | error={}",
+                "Failed to list R2 objects | user_id={} | prefix={} | error={}",
                 uid,
-                key,
+                prefix,
                 exc,
             )
+            continue
 
-    for filename in filenames:
-        file_path = Path(settings.design_upload_dir) / str(uid) / filename
-        try:
-            if file_path.exists():
-                file_path.unlink()
-                deleted_files.append(str(file_path))
-        except OSError as exc:
-            logger.error(
-                "Failed to delete design file | user_id={} | path={} | error={}",
-                uid,
-                file_path,
-                exc,
-            )
+        for key in keys:
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            try:
+                deleted = await delete_object_async(key)
+                if deleted:
+                    deleted_keys.append(key)
+            except Exception as exc:
+                logger.error(
+                    "Failed to delete R2 object | user_id={} | key={} | error={}",
+                    uid,
+                    key,
+                    exc,
+                )
 
     user_dir = Path(settings.design_upload_dir) / str(uid)
     try:
         if user_dir.exists() and user_dir.is_dir():
-            remaining = list(user_dir.iterdir())
-            if not remaining:
-                user_dir.rmdir()
+            local_files = [str(path) for path in user_dir.rglob("*") if path.is_file()]
+            shutil.rmtree(user_dir)
+            deleted_files.extend(local_files)
     except OSError as exc:
         logger.error(
-            "Failed to remove user directory | user_id={} | path={} | error={}",
+            "Failed to remove user upload directory | user_id={} | path={} | error={}",
             uid,
             user_dir,
             exc,

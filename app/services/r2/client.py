@@ -78,6 +78,44 @@ async def delete_object_async(key: str) -> bool:
     return await loop.run_in_executor(None, delete_object, key)
 
 
+def list_objects_with_prefix(prefix: str) -> list[str]:
+    if not settings.r2_bucket_name:
+        raise RuntimeError("R2 bucket name is not configured")
+
+    client = _get_r2_client()
+    keys: list[str] = []
+    continuation_token: str | None = None
+
+    while True:
+        params: dict[str, str] = {
+            "Bucket": settings.r2_bucket_name,
+            "Prefix": prefix,
+        }
+        if continuation_token:
+            params["ContinuationToken"] = continuation_token
+
+        response = client.list_objects_v2(**params)
+        contents = response.get("Contents", [])
+        for item in contents:
+            key = item.get("Key")
+            if isinstance(key, str):
+                keys.append(key)
+
+        if not response.get("IsTruncated"):
+            break
+
+        continuation_token = response.get("NextContinuationToken")
+        if not continuation_token:
+            break
+
+    return keys
+
+
+async def list_objects_with_prefix_async(prefix: str) -> list[str]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, list_objects_with_prefix, prefix)
+
+
 def object_exists(key: str) -> bool:
     if not settings.r2_bucket_name:
         raise RuntimeError("R2 bucket name is not configured")

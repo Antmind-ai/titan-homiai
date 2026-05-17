@@ -34,6 +34,7 @@ class _FakeAsyncSession:
         self._execute_results = list(execute_results)
         self._flush_effects = list(flush_effects or [])
         self.added: list[object] = []
+        self.deleted: list[object] = []
         self.commit_count = 0
         self.refresh_count = 0
         self.rollback_count = 0
@@ -63,6 +64,9 @@ class _FakeAsyncSession:
 
     async def rollback(self):
         self.rollback_count += 1
+
+    async def delete(self, value):
+        self.deleted.append(value)
 
 
 @pytest.mark.asyncio
@@ -120,30 +124,25 @@ async def test_device_login_existing_active_device_does_not_grant_credits(monkey
 
 
 @pytest.mark.asyncio
-async def test_device_login_reactivation_preserves_existing_zero_balance(monkeypatch):
-    user_id = uuid.uuid4()
-    now_before = datetime.now(UTC)
-    reactivated_user = SimpleNamespace(
-        id=user_id,
+async def test_device_login_deleted_user_creates_new_user(monkeypatch):
+    deleted_user_id = uuid.uuid4()
+    deleted_user = SimpleNamespace(
+        id=deleted_user_id,
         device_id="device-123",
         deleted_at=datetime(2026, 5, 1, tzinfo=UTC),
         credit_balance=0,
         onboarding_completed=True,
         last_seen_at=None,
     )
-    db = _FakeAsyncSession(execute_results=[reactivated_user])
+    db = _FakeAsyncSession(execute_results=[deleted_user, None])
 
     monkeypatch.setattr(auth, "create_access_token", lambda subject: f"token-for:{subject}")
 
     response = await auth.device_login(DeviceLoginRequest(device_id="device-123"), db)
 
-    assert response.user_id == user_id
-    assert response.access_token == f"token-for:{user_id}"
-    assert reactivated_user.credit_balance == 0
-    assert reactivated_user.deleted_at is None
-    assert reactivated_user.onboarding_completed is False
-    assert reactivated_user.last_seen_at is not None
-    assert reactivated_user.last_seen_at >= now_before
+    assert response.user_id != deleted_user_id
+    assert response.access_token == f"token-for:{response.user_id}"
+    assert deleted_user in db.deleted
     assert db.rollback_count == 0
     assert not any(isinstance(item, CreditLedgerEvent) for item in db.added)
 
@@ -231,7 +230,7 @@ async def test_delete_account_forfeits_remaining_credits(monkeypatch):
     assert response.user_id == user_id
     assert response.job_id == "cleanup-job-123"
     assert user.credit_balance == 0
-    assert user.deleted_at is not None
+    assert user in db.deleted
     assert len(forfeiture_events) == 1
     assert forfeiture_events[0].delta == -17
     assert forfeiture_events[0].balance_after == 0
