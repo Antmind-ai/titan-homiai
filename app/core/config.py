@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     higgsfield_design_quality: str = "high"
     higgsfield_design_aspect_ratio: str = "1:1"
     app_environment: str = "development"
-    free_lifetime_credits: int = Field(default=75, ge=0, le=1000)
+    free_lifetime_credits: int = Field(default=25, ge=0, le=1000)
     credits_internal_api_key: str | None = Field(default=None)
     enable_credit_self_topup: bool = False
     credit_self_topup_amount: int = Field(default=75, ge=1, le=1000)
