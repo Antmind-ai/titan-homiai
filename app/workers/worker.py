@@ -6,6 +6,7 @@ from app.workers.tasks import (
     cleanup_user_data_task,
     health_ping_task,
     process_design_request_task,
+    process_object_replace_request_task,
 )
 
 
@@ -18,7 +19,12 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = (health_ping_task, process_design_request_task, cleanup_user_data_task)
+    functions = (
+        health_ping_task,
+        process_design_request_task,
+        process_object_replace_request_task,
+        cleanup_user_data_task,
+    )
     redis_settings = RedisSettings(
         host=settings.redis_host,
         port=settings.redis_port,

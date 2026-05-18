@@ -38,6 +38,9 @@ class _FakeObjectReplaceDB:
     async def rollback(self):
         self.rollback_count += 1
 
+    async def refresh(self, _value):
+        return None
+
 
 class _FakeUploadFile:
     filename = "room.jpg"
@@ -480,7 +483,7 @@ async def test_consume_object_replace_credit_rejects_insufficient_balance(
 
 
 @pytest.mark.asyncio
-async def test_replace_object_from_upload_charges_before_calling_fal(
+async def test_replace_object_from_upload_charges_before_enqueueing_job(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -494,32 +497,30 @@ async def test_replace_object_from_upload_charges_before_calling_fal(
         assert args[0] is db
         assert kwargs["user_id"] == current_user_id
         assert kwargs["reference_id"]
+        assert kwargs["commit"] is False
         events.append("credit")
-        await db.commit()
 
-    async def _fake_replace_object_from_uploaded_image(**_kwargs):
-        events.append("fal")
-        assert events == ["credit", "fal"]
-        return {
-            "image_url": "https://cdn.test/output.jpg",
-            "mask_url": "https://cdn.test/mask.png",
-            "original_image_url": "https://cdn.test/original.jpg",
-            "request_id": "fill-request-1",
-            "mask_request_id": "mask-request-1",
-            "fill_request_id": "fill-request-1",
-            "prompt": "enhanced prompt",
-        }
+    async def _fake_enqueue_job(function_name: str, **kwargs):
+        events.append("enqueue")
+        assert events == ["credit", "enqueue"]
+        assert function_name == "process_object_replace_request_task"
+        assert kwargs["design_request_id"]
+        assert kwargs["image_content_type"] == "image/jpeg"
+        assert kwargs["file_name"] == "room.jpg"
+        assert kwargs["point_x"] == 10
+        assert kwargs["point_y"] == 12
+        assert kwargs["item_type"] == "chair"
+        assert kwargs["image_width"] == 100
+        assert kwargs["image_height"] == 100
+        assert kwargs["_defer_by"] == 1
+        return "object-replace-job-1"
 
     monkeypatch.setattr(
         object_replace_router,
         "_consume_object_replace_credit",
         _fake_consume_object_replace_credit,
     )
-    monkeypatch.setattr(
-        object_replace_router.fal_service,
-        "replace_object_from_uploaded_image",
-        _fake_replace_object_from_uploaded_image,
-    )
+    monkeypatch.setattr(object_replace_router, "enqueue_job", _fake_enqueue_job)
 
     response = await object_replace_router.replace_object_from_upload(
         file=_FakeUploadFile(b"image-bytes"),
@@ -536,14 +537,16 @@ async def test_replace_object_from_upload_charges_before_calling_fal(
         db=db,
     )
 
-    assert events == ["credit", "fal"]
-    assert response.image_url == "https://cdn.test/output.jpg"
+    assert events == ["credit", "enqueue"]
+    assert response.design_request_id == db.added[0].id
+    assert response.status == "queued"
+    assert response.queue_job_id == "object-replace-job-1"
     assert db.flush_count == 1
-    assert db.commit_count == 2
+    assert db.commit_count == 1
     assert db.rollback_count == 0
     assert len(db.added) == 1
-    assert db.added[0].status == "completed"
-    assert db.added[0].output_preview_url == "https://cdn.test/output.jpg"
+    assert db.added[0].status == "queued"
+    assert db.added[0].queue_job_id == "object-replace-job-1"
 
 
 @pytest.mark.asyncio

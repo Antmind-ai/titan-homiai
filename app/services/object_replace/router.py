@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 import uuid
 
@@ -13,6 +12,7 @@ from app.services.object_replace import fal_service, storage
 from app.services.object_replace.schemas import (
     SUPPORTED_IMAGE_CONTENT_TYPES,
     CreateObjectReplaceUploadRequest,
+    ObjectReplaceJobResponse,
     ObjectReplacePoint,
     ObjectReplaceResponse,
     ObjectReplaceUploadResponse,
@@ -22,6 +22,7 @@ from app.services.object_replace.schemas import (
 from app.services.platform.credit_service import InsufficientCreditsError, consume_credit
 from app.services.platform.endpoints.auth import get_current_user_id
 from app.services.platform.models import DesignRequest
+from app.workers.client import enqueue_job
 
 router = APIRouter(prefix="/object-replace", tags=["Object Replace"])
 OBJECT_REPLACE_CREDIT_COST = 25
@@ -68,6 +69,7 @@ async def _consume_object_replace_credit(
     *,
     user_id: uuid.UUID,
     reference_id: str,
+    commit: bool = True,
 ) -> None:
     try:
         await consume_credit(
@@ -78,7 +80,8 @@ async def _consume_object_replace_credit(
             reference_id=reference_id,
             credits=OBJECT_REPLACE_CREDIT_COST,
         )
-        await db.commit()
+        if commit:
+            await db.commit()
     except InsufficientCreditsError as exc:
         await db.rollback()
         raise HTTPException(
@@ -130,7 +133,8 @@ async def create_object_replace_upload(
 
 @router.post(
     "/from-upload",
-    response_model=ObjectReplaceResponse,
+    response_model=ObjectReplaceJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Replace an object using a direct image upload",
 )
 async def replace_object_from_upload(
@@ -146,7 +150,7 @@ async def replace_object_from_upload(
     palette_id: str = Form(default="surprise-me"),
     current_user_id=Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-) -> ObjectReplaceResponse:
+) -> ObjectReplaceJobResponse:
     content_type = (file.content_type or "").lower()
     if content_type not in SUPPORTED_IMAGE_CONTENT_TYPES:
         raise HTTPException(
@@ -251,7 +255,7 @@ async def replace_object_from_upload(
         palette_id=normalized_palette_id,
         prompt=normalized_prompt,
         status="processing",
-        processing_started_at=datetime.now(UTC),
+        processing_started_at=None,
     )
 
     db.add(design_request)
@@ -261,62 +265,39 @@ async def replace_object_from_upload(
             db,
             user_id=current_user_id,
             reference_id=str(design_request.id),
+            commit=False,
         )
+
+        queue_job_id = await enqueue_job(
+            "process_object_replace_request_task",
+            design_request_id=str(design_request.id),
+            image_content_type=content_type,
+            file_name=file.filename or "object-replace-upload",
+            point_x=point.x,
+            point_y=point.y,
+            item_type=normalized_item_type,
+            image_width=resolved_width,
+            image_height=resolved_height,
+            _defer_by=1,
+        )
+        design_request.queue_job_id = queue_job_id
+        design_request.status = "queued"
+        await db.commit()
+        await db.refresh(design_request)
     except HTTPException:
         raise
     except Exception as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not create My Library entry for object replacement.",
+            detail="Could not enqueue object replacement. Please try again.",
         ) from exc
 
-    try:
-        result = await fal_service.replace_object_from_uploaded_image(
-            image_bytes=image_bytes,
-            image_content_type=content_type,
-            file_name=file.filename or "object-replace-upload",
-            point=point,
-            prompt=normalized_prompt,
-            item_type=normalized_item_type,
-            image_width=resolved_width,
-            image_height=resolved_height,
-        )
-    except fal_service.ObjectReplaceFalError as exc:
-        design_request.status = "failed"
-        design_request.error_message = str(exc)[:500]
-        design_request.failed_at = datetime.now(UTC)
-        try:
-            await db.commit()
-        except Exception:
-            await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-
-    design_request.status = "completed"
-    design_request.queue_job_id = result["request_id"]
-    design_request.output_preview_url = str(result["image_url"])
-    design_request.completed_at = datetime.now(UTC)
-    design_request.error_message = None
-    try:
-        await db.commit()
-    except Exception as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Object replacement completed, but we could not save it to My Library.",
-        ) from exc
-
-    return ObjectReplaceResponse(
-        image_url=str(result["image_url"]),
-        mask_url=str(result["mask_url"]),
-        original_image_url=str(result["original_image_url"]),
-        request_id=result["request_id"],
-        mask_request_id=result["mask_request_id"],
-        fill_request_id=result["fill_request_id"],
-        prompt=str(result["prompt"]),
+    return ObjectReplaceJobResponse(
+        design_request_id=design_request.id,
+        status=design_request.status,
+        queue_job_id=design_request.queue_job_id,
+        prompt=design_request.prompt or normalized_prompt,
     )
 
 

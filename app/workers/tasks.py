@@ -12,6 +12,8 @@ from app.core.config import settings
 from app.core.database import get_db_context
 from app.services.design_generation import DesignGenerationError, generate_image
 from app.services.design_generation.service import get_model_credit_cost
+from app.services.object_replace import fal_service
+from app.services.object_replace.schemas import ObjectReplacePoint
 from app.services.platform.credit_service import (
     InsufficientCreditsError,
     add_credits,
@@ -298,8 +300,8 @@ async def process_design_request_task(
                     )
                 except Exception:
                     logger.exception(
-                        "Failed to restore design request credits after unexpected worker failure | "
-                        "request_id={}",
+                        "Failed to restore design request credits after unexpected "
+                        "worker failure | request_id={}",
                         request_id,
                     )
 
@@ -319,6 +321,116 @@ async def process_design_request_task(
         "status": "completed",
         "design_request_id": design_request_id,
         "output_url": result_obj.url,
+    }
+
+
+async def process_object_replace_request_task(
+    ctx: dict[str, Any],
+    design_request_id: str,
+    image_content_type: str,
+    file_name: str,
+    point_x: int,
+    point_y: int,
+    item_type: str = "furniture",
+    image_width: int | None = None,
+    image_height: int | None = None,
+) -> dict[str, Any]:
+    try:
+        request_id = uuid.UUID(design_request_id)
+    except ValueError as exc:
+        logger.error("Invalid object replace design_request_id | id={}", design_request_id)
+        raise RuntimeError("Invalid design_request_id") from exc
+
+    logger.info("Processing object replace ARQ job | request_id={}", request_id)
+
+    async with get_db_context() as db:
+        result = await db.execute(select(DesignRequest).where(DesignRequest.id == request_id))
+        design_request = result.scalar_one_or_none()
+
+        if design_request is None:
+            logger.error("Object replace request not found | request_id={}", request_id)
+            return {"status": "missing", "design_request_id": design_request_id}
+
+        design_request.status = "processing"
+        design_request.processing_started_at = datetime.now(UTC)
+        design_request.failed_at = None
+        design_request.error_message = None
+        await db.commit()
+
+    try:
+        image_path, _is_temp = await _resolve_input_image_path(design_request)
+        image_bytes = image_path.read_bytes()
+        point = ObjectReplacePoint(x=point_x, y=point_y, label=1)
+
+        result_obj = await fal_service.replace_object_from_uploaded_image(
+            image_bytes=image_bytes,
+            image_content_type=image_content_type,
+            file_name=file_name,
+            point=point,
+            prompt=design_request.prompt or "",
+            item_type=item_type,
+            image_width=image_width,
+            image_height=image_height,
+        )
+
+        async with get_db_context() as db:
+            result = await db.execute(select(DesignRequest).where(DesignRequest.id == request_id))
+            design_request = result.scalar_one_or_none()
+
+            if design_request is None:
+                logger.error(
+                    "Object replace request missing during completion | request_id={}",
+                    request_id,
+                )
+                return {"status": "missing", "design_request_id": design_request_id}
+
+            design_request.status = "completed"
+            design_request.completed_at = datetime.now(UTC)
+            design_request.output_preview_url = str(result_obj["image_url"])
+            design_request.error_message = None
+            await db.commit()
+
+    except (DesignGenerationError, fal_service.ObjectReplaceFalError) as exc:
+        error_msg = str(exc)[:500]
+        logger.error("Object replace failed | request_id={} | error={}", request_id, error_msg)
+
+        async with get_db_context() as db:
+            result = await db.execute(select(DesignRequest).where(DesignRequest.id == request_id))
+            design_request = result.scalar_one_or_none()
+
+            if design_request is not None:
+                design_request.status = "failed"
+                design_request.failed_at = datetime.now(UTC)
+                design_request.error_message = error_msg
+                await db.commit()
+
+        return {
+            "status": "failed",
+            "design_request_id": design_request_id,
+            "error": error_msg,
+        }
+
+    except Exception as exc:
+        error_msg = str(exc)[:500]
+        logger.exception("Object replace ARQ task failed | request_id={}", request_id)
+
+        async with get_db_context() as db:
+            result = await db.execute(select(DesignRequest).where(DesignRequest.id == request_id))
+            design_request = result.scalar_one_or_none()
+
+            if design_request is not None:
+                design_request.status = "failed"
+                design_request.failed_at = datetime.now(UTC)
+                design_request.error_message = error_msg
+                await db.commit()
+
+        raise
+
+    logger.info("Object replace completed by ARQ worker | request_id={}", request_id)
+    return {
+        "status": "completed",
+        "design_request_id": design_request_id,
+        "output_url": str(result_obj["image_url"]),
     }
 
 

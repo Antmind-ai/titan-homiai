@@ -108,3 +108,10 @@ class ObjectReplaceResponse(BaseModel):
     @classmethod
     def validate_response_urls(cls, value: str) -> str:
         return _validate_http_url(value)
+
+
+class ObjectReplaceJobResponse(BaseModel):
+    design_request_id: uuid.UUID
+    status: str
+    queue_job_id: str | None = None
+    prompt: str
