@@ -10,6 +10,13 @@ SUPPORTED_IMAGE_CONTENT_TYPES = ("image/jpeg", "image/png", "image/webp", "image
 SupportedImageContentType = Literal["image/jpeg", "image/png", "image/webp", "image/heic"]
 
 
+def normalize_item_type(value: str | None) -> str:
+    item_type = (value or "furniture").strip()
+    if len(item_type) < 3:
+        raise ValueError("item_type must contain at least 3 non-whitespace characters")
+    return item_type[:80]
+
+
 def _validate_http_url(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -57,6 +64,7 @@ class ReplaceObjectRequest(BaseModel):
     original_image_url: str = Field(..., max_length=3000)
     prompt: str = Field(..., min_length=3, max_length=1000)
     point: ObjectReplacePoint
+    item_type: str = Field(default="furniture", min_length=3, max_length=80)
     image_width: int | None = Field(default=None, ge=1, le=8192)
     image_height: int | None = Field(default=None, ge=1, le=8192)
 
@@ -72,6 +80,11 @@ class ReplaceObjectRequest(BaseModel):
         if len(prompt) < 3:
             raise ValueError("prompt must contain at least 3 non-whitespace characters")
         return prompt
+
+    @field_validator("item_type")
+    @classmethod
+    def normalize_item_type_value(cls, value: str) -> str:
+        return normalize_item_type(value)
 
     @model_validator(mode="after")
     def validate_point_bounds(self) -> ReplaceObjectRequest:

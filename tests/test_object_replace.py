@@ -73,6 +73,37 @@ def test_replace_schema_rejects_invalid_payloads() -> None:
             image_height=100,
         )
 
+    with pytest.raises(ValidationError):
+        ReplaceObjectRequest(
+            original_image_url="https://example.test/room.jpg",
+            prompt="replace sofa",
+            point={"x": 10, "y": 10, "label": 1},
+            item_type="x",
+            image_width=100,
+            image_height=100,
+        )
+
+
+def test_replace_schema_defaults_and_normalizes_item_type() -> None:
+    default_payload = ReplaceObjectRequest(
+        original_image_url="https://example.test/room.jpg",
+        prompt="replace sofa",
+        point={"x": 10, "y": 10, "label": 1},
+        image_width=100,
+        image_height=100,
+    )
+    custom_payload = ReplaceObjectRequest(
+        original_image_url="https://example.test/room.jpg",
+        prompt="replace sofa",
+        point={"x": 10, "y": 10, "label": 1},
+        item_type="  TV console  ",
+        image_width=100,
+        image_height=100,
+    )
+
+    assert default_payload.item_type == "furniture"
+    assert custom_payload.item_type == "TV console"
+
 
 def test_replace_schema_rejects_point_outside_declared_dimensions() -> None:
     with pytest.raises(ValidationError):
@@ -221,7 +252,7 @@ async def test_upload_binary_blob_wraps_fal_upload_errors(
 
 
 @pytest.mark.asyncio
-async def test_replace_object_from_uploaded_image_uses_mask_fill_pipeline(
+async def test_replace_object_from_uploaded_image_uses_segmentation_mask_fill_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     uploads: list[tuple[str, str, int]] = []
@@ -230,13 +261,20 @@ async def test_replace_object_from_uploaded_image_uses_mask_fill_pipeline(
         uploads.append((content_type, file_name, len(data)))
         return f"https://files.test/{len(uploads)}"
 
+    async def _fake_generate_mask(*, image_url: str, point: ObjectReplacePoint, item_type: str):
+        assert image_url == "https://files.test/1"
+        assert point == ObjectReplacePoint(x=40, y=30, label=1)
+        assert item_type == "chair"
+        return "https://files.test/mask.png", "mask-request-1"
+
     async def _fake_inpaint_object(*, image_url: str, mask_url: str, prompt: str):
         assert image_url == "https://files.test/1"
-        assert mask_url == "https://files.test/2"
+        assert mask_url == "https://files.test/mask.png"
         assert prompt == "replace chair with modern chair"
         return "https://files.test/output.jpg", "fill-request-1", "enhanced prompt"
 
     monkeypatch.setattr(fal_service, "upload_binary_blob", _fake_upload_binary_blob)
+    monkeypatch.setattr(fal_service, "generate_mask", _fake_generate_mask)
     monkeypatch.setattr(fal_service, "inpaint_object", _fake_inpaint_object)
 
     result = await fal_service.replace_object_from_uploaded_image(
@@ -245,6 +283,7 @@ async def test_replace_object_from_uploaded_image_uses_mask_fill_pipeline(
         file_name="room.jpg",
         point=ObjectReplacePoint(x=40, y=30, label=1),
         prompt="replace chair with modern chair",
+        item_type="chair",
         image_width=128,
         image_height=96,
     )
@@ -252,19 +291,59 @@ async def test_replace_object_from_uploaded_image_uses_mask_fill_pipeline(
     assert uploads[0][0] == "image/jpeg"
     assert uploads[0][1] == "room.jpg"
     assert uploads[0][2] == len(b"image-bytes")
-    assert uploads[1][0] == "image/png"
-    assert uploads[1][1].endswith("-mask.png")
-    assert uploads[1][2] > uploads[0][2]
+    assert len(uploads) == 1
 
     assert result == {
         "image_url": "https://files.test/output.jpg",
-        "mask_url": "https://files.test/2",
+        "mask_url": "https://files.test/mask.png",
         "original_image_url": "https://files.test/1",
         "request_id": "fill-request-1",
-        "mask_request_id": None,
+        "mask_request_id": "mask-request-1",
         "fill_request_id": "fill-request-1",
         "prompt": "enhanced prompt",
     }
+
+
+@pytest.mark.asyncio
+async def test_replace_object_from_uploaded_image_falls_back_to_circular_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uploads: list[tuple[str, str, int]] = []
+
+    async def _fake_upload_binary_blob(*, data: bytes, content_type: str, file_name: str) -> str:
+        uploads.append((content_type, file_name, len(data)))
+        return f"https://files.test/{len(uploads)}"
+
+    async def _raise_generate_mask(**_kwargs):
+        raise fal_service.ObjectReplaceFalError("segmentation failed")
+
+    async def _fake_inpaint_object(*, image_url: str, mask_url: str, prompt: str):
+        assert image_url == "https://files.test/1"
+        assert mask_url == "https://files.test/2"
+        assert prompt == "replace lamp with ceramic lamp"
+        return "https://files.test/output.jpg", "fill-request-1", "enhanced prompt"
+
+    monkeypatch.setattr(fal_service, "upload_binary_blob", _fake_upload_binary_blob)
+    monkeypatch.setattr(fal_service, "generate_mask", _raise_generate_mask)
+    monkeypatch.setattr(fal_service, "inpaint_object", _fake_inpaint_object)
+
+    result = await fal_service.replace_object_from_uploaded_image(
+        image_bytes=b"image-bytes",
+        image_content_type="image/jpeg",
+        file_name="room.jpg",
+        point=ObjectReplacePoint(x=40, y=30, label=1),
+        prompt="replace lamp with ceramic lamp",
+        item_type="lamp",
+        image_width=128,
+        image_height=96,
+    )
+
+    assert uploads[0][0] == "image/jpeg"
+    assert uploads[1][0] == "image/png"
+    assert uploads[1][1].endswith("-mask.png")
+    assert uploads[1][2] > uploads[0][2]
+    assert result["mask_url"] == "https://files.test/2"
+    assert result["mask_request_id"] is None
 
 
 def test_persist_uploaded_input_image_writes_preview_file(
@@ -295,7 +374,7 @@ async def test_replace_object_calls_fal_segmentation_then_fill(
 
     monkeypatch.setattr(fal_service.settings, "fal_key", "test-fal-key")
     monkeypatch.setattr(fal_service.settings, "fal_timeout_ms", 900000)
-    monkeypatch.setattr(fal_service.settings, "fal_segmentation_model_id", "fal-ai/fast-sam")
+    monkeypatch.setattr(fal_service.settings, "fal_segmentation_model_id", "fal-ai/sam-3-1/image")
     monkeypatch.setattr(fal_service.settings, "fal_fill_model_id", "fal-ai/flux-pro/v1/fill")
 
     async def fake_subscribe_async(model_id: str, arguments: dict, **kwargs):
@@ -304,8 +383,8 @@ async def test_replace_object_calls_fal_segmentation_then_fill(
             on_enqueue(f"request-for-{model_id}")
 
         calls.append((model_id, arguments))
-        if model_id == "fal-ai/fast-sam":
-            return {"mask_url": "https://cdn.test/mask.png"}
+        if model_id == "fal-ai/sam-3-1/image":
+            return {"masks": [{"url": "https://cdn.test/mask.png"}]}
         return {
             "images": [{"url": "https://cdn.test/fill.jpg"}],
             "prompt": "enhanced replacement prompt",
@@ -317,22 +396,30 @@ async def test_replace_object_calls_fal_segmentation_then_fill(
         image_url="https://cdn.test/room.jpg",
         point=ObjectReplacePoint(x=42, y=84, label=1),
         prompt="replace sofa with modern beige sectional",
+        item_type="sofa",
     )
 
     assert result == {
         "image_url": "https://cdn.test/fill.jpg",
         "mask_url": "https://cdn.test/mask.png",
         "request_id": "request-for-fal-ai/flux-pro/v1/fill",
-        "mask_request_id": "request-for-fal-ai/fast-sam",
+        "mask_request_id": "request-for-fal-ai/sam-3-1/image",
         "fill_request_id": "request-for-fal-ai/flux-pro/v1/fill",
         "prompt": "enhanced replacement prompt",
     }
     assert calls == [
         (
-            "fal-ai/fast-sam",
+            "fal-ai/sam-3-1/image",
             {
                 "image_url": "https://cdn.test/room.jpg",
-                "points": [{"x": 42, "y": 84, "label": 1}],
+                "prompt": "sofa",
+                "point_prompts": [{"x": 42, "y": 84, "label": 1, "object_id": 1}],
+                "apply_mask": False,
+                "output_format": "png",
+                "return_multiple_masks": True,
+                "max_masks": 1,
+                "include_scores": True,
+                "include_boxes": True,
             },
         ),
         (

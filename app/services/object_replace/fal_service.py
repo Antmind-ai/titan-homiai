@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 import os
+from pathlib import Path
 import struct
 from typing import Any
 import zlib
@@ -195,10 +195,11 @@ async def generate_mask(
     *,
     image_url: str,
     point: ObjectReplacePoint,
+    item_type: str = "furniture",
 ) -> tuple[str, str | None]:
-    output, request_id = await _subscribe(
-        model_id=settings.fal_segmentation_model_id,
-        arguments={
+    model_id = settings.fal_segmentation_model_id
+    if model_id == "fal-ai/fast-sam":
+        arguments = {
             "image_url": image_url,
             "points": [
                 {
@@ -207,7 +208,30 @@ async def generate_mask(
                     "label": 1,
                 }
             ],
-        },
+        }
+    else:
+        arguments = {
+            "image_url": image_url,
+            "prompt": item_type,
+            "point_prompts": [
+                {
+                    "x": point.x,
+                    "y": point.y,
+                    "label": 1,
+                    "object_id": 1,
+                }
+            ],
+            "apply_mask": False,
+            "output_format": "png",
+            "return_multiple_masks": True,
+            "max_masks": 1,
+            "include_scores": True,
+            "include_boxes": True,
+        }
+
+    output, request_id = await _subscribe(
+        model_id=model_id,
+        arguments=arguments,
         stage="mask",
     )
     return extract_mask_url(output), request_id
@@ -245,8 +269,13 @@ async def replace_object(
     image_url: str,
     point: ObjectReplacePoint,
     prompt: str,
+    item_type: str = "furniture",
 ) -> dict[str, str | None]:
-    mask_url, mask_request_id = await generate_mask(image_url=image_url, point=point)
+    mask_url, mask_request_id = await generate_mask(
+        image_url=image_url,
+        point=point,
+        item_type=item_type,
+    )
     image_url_out, fill_request_id, final_prompt = await inpaint_object(
         image_url=image_url,
         mask_url=mask_url,
@@ -270,6 +299,7 @@ async def replace_object_from_uploaded_image(
     file_name: str,
     point: ObjectReplacePoint,
     prompt: str,
+    item_type: str = "furniture",
     image_width: int,
     image_height: int,
 ) -> dict[str, str | None]:
@@ -280,16 +310,27 @@ async def replace_object_from_uploaded_image(
         content_type=image_content_type,
         file_name=file_name,
     )
-    mask_png = build_circular_mask_png(
-        width=image_width,
-        height=image_height,
-        point=point,
-    )
-    mask_url = await upload_binary_blob(
-        data=mask_png,
-        content_type="image/png",
-        file_name=f"{safe_stem}-mask.png",
-    )
+    try:
+        mask_url, mask_request_id = await generate_mask(
+            image_url=original_image_url,
+            point=point,
+            item_type=item_type,
+        )
+    except ObjectReplaceFalError:
+        logger.warning(
+            "fal.ai segmentation failed; falling back to circular object-replace mask"
+        )
+        mask_png = build_circular_mask_png(
+            width=image_width,
+            height=image_height,
+            point=point,
+        )
+        mask_url = await upload_binary_blob(
+            data=mask_png,
+            content_type="image/png",
+            file_name=f"{safe_stem}-mask.png",
+        )
+        mask_request_id = None
 
     image_url_out, fill_request_id, final_prompt = await inpaint_object(
         image_url=original_image_url,
@@ -302,7 +343,7 @@ async def replace_object_from_uploaded_image(
         "mask_url": mask_url,
         "original_image_url": original_image_url,
         "request_id": fill_request_id,
-        "mask_request_id": None,
+        "mask_request_id": mask_request_id,
         "fill_request_id": fill_request_id,
         "prompt": final_prompt,
     }

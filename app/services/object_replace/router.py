@@ -11,12 +11,13 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.services.object_replace import fal_service, storage
 from app.services.object_replace.schemas import (
+    SUPPORTED_IMAGE_CONTENT_TYPES,
     CreateObjectReplaceUploadRequest,
     ObjectReplacePoint,
     ObjectReplaceResponse,
     ObjectReplaceUploadResponse,
     ReplaceObjectRequest,
-    SUPPORTED_IMAGE_CONTENT_TYPES,
+    normalize_item_type,
 )
 from app.services.platform.endpoints.auth import get_current_user_id
 from app.services.platform.models import DesignRequest
@@ -97,6 +98,7 @@ async def replace_object_from_upload(
     point_y: int = Form(...),
     image_width: int | None = Form(default=None),
     image_height: int | None = Form(default=None),
+    item_type: str = Form(default="furniture"),
     building_type: str = Form(default="other"),
     style_id: str = Form(default="modern"),
     palette_id: str = Form(default="surprise-me"),
@@ -146,6 +148,14 @@ async def replace_object_from_upload(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="point_y must be inside image_height",
         )
+
+    try:
+        normalized_item_type = normalize_item_type(item_type)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     try:
         image_bytes = await file.read()
@@ -206,12 +216,12 @@ async def replace_object_from_upload(
     try:
         await db.commit()
         await db.refresh(design_request)
-    except Exception:
+    except Exception as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not create My Library entry for object replacement.",
-        )
+        ) from exc
 
     try:
         result = await fal_service.replace_object_from_uploaded_image(
@@ -220,6 +230,7 @@ async def replace_object_from_upload(
             file_name=file.filename or "object-replace-upload",
             point=point,
             prompt=normalized_prompt,
+            item_type=normalized_item_type,
             image_width=resolved_width,
             image_height=resolved_height,
         )
@@ -243,12 +254,12 @@ async def replace_object_from_upload(
     design_request.error_message = None
     try:
         await db.commit()
-    except Exception:
+    except Exception as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Object replacement completed, but we could not save it to My Library.",
-        )
+        ) from exc
 
     return ObjectReplaceResponse(
         image_url=str(result["image_url"]),
@@ -275,6 +286,7 @@ async def replace_object_in_image(
             image_url=payload.original_image_url,
             point=payload.point,
             prompt=payload.prompt,
+            item_type=payload.item_type,
         )
     except fal_service.ObjectReplaceFalError as exc:
         raise HTTPException(

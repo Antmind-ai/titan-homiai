@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     fal_design_aspect_ratio: str = "1:1"
     fal_design_resolution: Literal["1K", "2K", "4K"] = "1K"
     fal_design_output_format: Literal["jpeg", "png", "webp"] = "png"
-    fal_segmentation_model_id: str = "fal-ai/fast-sam"
+    fal_segmentation_model_id: str = "fal-ai/sam-3-1/image"
     fal_fill_model_id: str = "fal-ai/flux-pro/v1/fill"
     higgsfield_timeout_minutes: int = Field(default=20, ge=1, le=120)
     higgsfield_bin: str = "higgsfield"
